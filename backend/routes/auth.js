@@ -26,10 +26,41 @@ const authenticate = (req, res, next) => {
   });
 };
 
-router.post('/login', (req, res) => {
-  const { email, password } = req.body;
+const ensureFacultyManagementTables = () => {
+  db.query(`CREATE TABLE IF NOT EXISTS faculty_classes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    faculty_id INT,
+    class_name VARCHAR(255),
+    course VARCHAR(255),
+    subject VARCHAR(255),
+    is_tutorship BOOLEAN DEFAULT FALSE,
+    student_count INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`, (err) => {
+    if (err) console.log('Error creating faculty_classes table:', err);
+  });
 
-  db.query('SELECT * FROM student WHERE email = ?', [email], async (err, results) => {
+  db.query(`CREATE TABLE IF NOT EXISTS faculty_class_students (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    class_id INT,
+    student_name VARCHAR(255),
+    roll_no VARCHAR(100),
+    marks INT DEFAULT 0,
+    result VARCHAR(50),
+    details TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`, (err) => {
+    if (err) console.log('Error creating faculty_class_students table:', err);
+  });
+};
+
+ensureFacultyManagementTables();
+
+router.post('/login', (req, res) => {
+  const { email, password, role = 'student' } = req.body;
+  const table = role === 'faculty' ? 'faculty' : 'student';
+
+  db.query(`SELECT * FROM ${table} WHERE email = ?`, [email], async (err, results) => {
     if (err) {
       return res.status(500).send('Database error');
     }
@@ -46,21 +77,30 @@ router.post('/login', (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, role: 'student' },
+      { id: user.id, email: user.email, role },
       JWT_SECRET,
       { expiresIn: '1h' }
     );
 
+    const responseUser = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+    };
+
+    if (role === 'student') {
+      responseUser.course = user.course;
+      responseUser.year = user.year;
+    } else {
+      responseUser.department = user.department;
+      responseUser.designation = user.designation;
+    }
+
     res.json({
       token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        course: user.course,
-        year: user.year,
-        phone: user.phone,
-      },
+      role,
+      user: responseUser,
     });
   });
 });
@@ -171,6 +211,238 @@ router.get('/student/fees', authenticate, (req, res) => {
     status: "Pending"
   };
   res.json(feeData);
+});
+
+router.get('/faculty/profile', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  db.query(
+    'SELECT id, name, email, department, designation, phone, address, dob FROM faculty WHERE id = ?',
+    [req.user.id],
+    (err, results) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      if (!results || results.length === 0) {
+        return res.status(404).send('Faculty member not found');
+      }
+      res.json(results[0]);
+    }
+  );
+});
+
+router.post('/faculty/profile', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { name, phone, department, designation, address, dob } = req.body;
+  const facultyId = req.user.id;
+
+  if (!name || !phone) {
+    return res.status(400).send('Name and phone are required');
+  }
+
+  db.query(
+    'UPDATE faculty SET name = ?, phone = ?, department = ?, designation = ?, address = ?, dob = ? WHERE id = ?',
+    [name, phone, department || null, designation || null, address || null, dob || null, facultyId],
+    (err, result) => {
+      if (err) {
+        console.log('Update error:', err);
+        return res.status(500).send('Database error');
+      }
+      if (result.affectedRows === 0) {
+        return res.status(404).send('Faculty member not found');
+      }
+      res.json({
+        message: 'Profile updated successfully',
+        id: facultyId,
+        name,
+        phone,
+        department,
+        designation,
+        address,
+        dob,
+      });
+    }
+  );
+});
+
+router.get('/faculty/schedule', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const schedule = [
+    { day: 'Monday', slot: '9AM - 10:30AM', subject: 'Maths', room: 'A1' },
+    { day: 'Tuesday', slot: '11AM - 12:30PM', subject: 'Physics', room: 'B2' },
+    { day: 'Wednesday', slot: '2PM - 3:30PM', subject: 'Chemistry', room: 'C3' },
+    { day: 'Thursday', slot: '9AM - 10:30AM', subject: 'English', room: 'D4' },
+    { day: 'Friday', slot: '12PM - 1:30PM', subject: 'Computer Science', room: 'E5' },
+  ];
+
+  res.json(schedule);
+});
+
+router.get('/faculty/salary', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const salaryInfo = {
+    baseSalary: 75000,
+    allowances: 15000,
+    deductions: 5000,
+    netSalary: 85000,
+    lastPaid: '2026-04-01',
+  };
+
+  res.json(salaryInfo);
+});
+
+router.get('/faculty/classes', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  db.query(
+    'SELECT * FROM faculty_classes WHERE faculty_id = ?',
+    [req.user.id],
+    (err, results) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      res.json(results);
+    }
+  );
+});
+
+router.post('/faculty/classes', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { class_name, course, subject, is_tutorship, student_count } = req.body;
+
+  db.query(
+    'INSERT INTO faculty_classes (faculty_id, class_name, course, subject, is_tutorship, student_count) VALUES (?, ?, ?, ?, ?, ?)',
+    [req.user.id, class_name, course, subject, is_tutorship ? 1 : 0, student_count || 0],
+    (err, result) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      res.json({ id: result.insertId, class_name, course, subject, is_tutorship, student_count });
+    }
+  );
+});
+
+router.put('/faculty/classes/:id', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const classId = req.params.id;
+  const { class_name, course, subject, is_tutorship, student_count } = req.body;
+
+  db.query(
+    'UPDATE faculty_classes SET class_name = ?, course = ?, subject = ?, is_tutorship = ?, student_count = ? WHERE id = ? AND faculty_id = ?',
+    [class_name, course, subject, is_tutorship ? 1 : 0, student_count || 0, classId, req.user.id],
+    (err, result) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      if (result.affectedRows === 0) {
+        return res.status(404).send('Class not found');
+      }
+      res.json({ id: Number(classId), class_name, course, subject, is_tutorship, student_count });
+    }
+  );
+});
+
+router.get('/faculty/classes/:classId/students', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { classId } = req.params;
+  db.query(
+    'SELECT * FROM faculty_class_students WHERE class_id = ?',
+    [classId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      res.json(results);
+    }
+  );
+});
+
+router.post('/faculty/classes/:classId/students', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { classId } = req.params;
+  const { student_name, roll_no, marks, result, details } = req.body;
+
+  db.query(
+    'INSERT INTO faculty_class_students (class_id, student_name, roll_no, marks, result, details) VALUES (?, ?, ?, ?, ?, ?)',
+    [classId, student_name, roll_no, marks || 0, result || '', details || ''],
+    (err, resultData) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      res.json({ id: resultData.insertId, class_id: Number(classId), student_name, roll_no, marks: marks || 0, result: result || '', details: details || '' });
+    }
+  );
+});
+
+router.put('/faculty/classes/:classId/students/:studentId', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { classId, studentId } = req.params;
+  const { student_name, roll_no, marks, result, details } = req.body;
+
+  db.query(
+    'UPDATE faculty_class_students SET student_name = ?, roll_no = ?, marks = ?, result = ?, details = ? WHERE id = ? AND class_id = ?',
+    [student_name, roll_no, marks || 0, result || '', details || '', studentId, classId],
+    (err, resultData) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      if (resultData.affectedRows === 0) {
+        return res.status(404).send('Student not found');
+      }
+      res.json({ id: Number(studentId), class_id: Number(classId), student_name, roll_no, marks: marks || 0, result: result || '', details: details || '' });
+    }
+  );
+});
+
+router.put('/faculty/student/:studentId/marks', authenticate, (req, res) => {
+  if (req.user.role !== 'faculty') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { studentId } = req.params;
+  const { marks, result, details } = req.body;
+
+  db.query(
+    'UPDATE faculty_class_students SET marks = ?, result = ?, details = ? WHERE id = ?',
+    [marks || 0, result || '', details || '', studentId],
+    (err, resultData) => {
+      if (err) {
+        return res.status(500).send('Database error');
+      }
+      if (resultData.affectedRows === 0) {
+        return res.status(404).send('Student not found');
+      }
+      res.json({ id: Number(studentId), marks: marks || 0, result: result || '', details: details || '' });
+    }
+  );
 });
 
 module.exports = router;
