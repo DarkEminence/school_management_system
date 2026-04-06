@@ -72,6 +72,8 @@ const HomeStudent = () => {
           <button
             onClick={() => {
               localStorage.removeItem("token");
+              localStorage.removeItem("role");
+              localStorage.removeItem("user");
               navigate("/");
             }}
             className="absolute top-4 left-4 px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 transition text-sm font-medium"
@@ -123,7 +125,7 @@ const HomeStudent = () => {
             <div className="mt-8 p-5 rounded-3xl bg-slate-50 border border-slate-200">
               <h4 className="text-sm font-semibold text-slate-700">Recent Results</h4>
               <div className="mt-4 space-y-3">
-                {marks.subjects.slice(0, 2).map((subject, index) => (
+                {(marks.subjects || []).slice(0, 2).map((subject, index) => (
                   <div key={index} className="rounded-2xl bg-white p-4 shadow-sm border border-slate-200">
                     <div className="flex justify-between items-center">
                       <div>
@@ -140,7 +142,7 @@ const HomeStudent = () => {
                 <div className="rounded-2xl bg-green-50 p-4 border border-green-200">
                   <div className="flex justify-between items-center">
                     <p className="text-sm font-semibold text-green-900">Overall Percentage</p>
-                    <p className="text-lg font-bold text-green-700">{marks.summary.percentage}%</p>
+                    <p className="text-lg font-bold text-green-700">{marks.summary?.percentage ?? 0}%</p>
                   </div>
                 </div>
               </div>
@@ -201,7 +203,7 @@ const HomeStudent = () => {
               {marks && (
                 <div className="rounded-3xl bg-white/10 p-5 border border-white/10">
                   <p className="text-sm text-purple-100">Overall Grade</p>
-                  <p className="mt-2 text-lg font-semibold text-white">{marks.summary.percentage}%</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{marks.summary?.percentage ?? 0}%</p>
                 </div>
               )}
               {fees && (

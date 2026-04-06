@@ -10,7 +10,8 @@ const StudentDetails = () => {
     year: "",
     phone: "",
     address: "",
-    dob: ""
+    dob: "",
+    gender: "",
   });
 
   const navigate = useNavigate();
@@ -45,9 +46,10 @@ const StudentDetails = () => {
     e.preventDefault();
 
     try {
+      const { name, phone, address, dob, gender } = form;
       await axios.post(
         "http://localhost:5000/api/student/profile",
-        form,
+        { name, phone, address, dob, gender },
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -84,8 +86,9 @@ const StudentDetails = () => {
 
           <input name="name" value={form.name} onChange={handleChange} placeholder="Name" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" />
           <input name="email" value={form.email} onChange={handleChange} placeholder="Email" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" disabled />
-          <input name="course" value={form.course} onChange={handleChange} placeholder="Course" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" />
-          <input name="year" value={form.year} onChange={handleChange} placeholder="Year" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" />
+          <input name="course" value={form.course ?? ""} readOnly placeholder="Class / course (from your enrollment)" title="Assigned by the school from your class" className="w-full border border-slate-200 bg-slate-50 p-3 rounded-lg text-sm text-slate-600" />
+          <input name="year" value={form.year ?? ""} readOnly placeholder="Year (if applicable)" className="w-full border border-slate-200 bg-slate-50 p-3 rounded-lg text-sm text-slate-600" />
+          <input name="gender" value={form.gender ?? ""} onChange={handleChange} placeholder="Gender" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" />
           <input name="phone" value={form.phone} onChange={handleChange} placeholder="Phone" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" />
           <input name="dob" value={form.dob} onChange={handleChange} type="date" className="w-full border border-slate-300 p-3 rounded-lg outline-none focus:ring-2 focus:ring-fuchsia-400 text-sm" />
           

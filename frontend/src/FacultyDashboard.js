@@ -48,6 +48,8 @@ const FacultyDashboard = () => {
           <button
             onClick={() => {
               localStorage.removeItem("token");
+              localStorage.removeItem("role");
+              localStorage.removeItem("user");
               navigate("/");
             }}
             className="absolute top-4 left-4 px-4 py-2 bg-purple-700 text-white rounded-lg hover:bg-purple-800 transition text-sm font-medium"

@@ -20,14 +20,17 @@ const LoginPage = () => {
       const res = await axios.post("http://localhost:5000/api/login", {
         email,
         password,
-        role: selectedRole, // future use
+        role: selectedRole,
       });
 
-      // store token (for next step)
+      const loggedRole = res.data.role || selectedRole;
       localStorage.setItem("token", res.data.token);
+      localStorage.setItem("role", loggedRole);
+      if (res.data.user) {
+        localStorage.setItem("user", JSON.stringify(res.data.user));
+      }
 
-      // redirect based on role
-      if (selectedRole === "faculty") {
+      if (loggedRole === "faculty") {
         navigate("/faculty/dashboard");
       } else {
         navigate("/student/studenthome");

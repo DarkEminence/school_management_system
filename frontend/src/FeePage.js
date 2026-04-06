@@ -20,14 +20,12 @@ const FeePage = () => {
         setFee(res.data);
       } catch (err) {
         console.log(err);
-
-        // 🔹 Dummy data (for testing)
         setFee({
-          total: 50000,
-          paid: 30000,
-          pending: 20000,
-          dueDate: "2026-05-10",
-          status: "Pending"
+          total: 0,
+          paid: 0,
+          pending: 0,
+          dueDate: null,
+          status: "Unable to load",
         });
       }
     };

@@ -82,7 +82,7 @@ const FacultySalary = () => {
 
           <div className="mt-6 rounded-3xl bg-slate-50 p-5 text-slate-700">
             <p className="text-sm text-slate-500">Last Paid</p>
-            <p className="mt-2 text-lg font-semibold">{salary.lastPaid}</p>
+            <p className="mt-2 text-lg font-semibold">{salary.lastPaid ?? "—"}</p>
           </div>
         </div>
       </div>

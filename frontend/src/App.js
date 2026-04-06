@@ -11,8 +11,6 @@ import FacultyDetails from "./FacultyDetails";
 import FacultySchedule from "./FacultySchedule";
 import FacultySalary from "./FacultySalary";
 import FacultyManage from "./FacultyManage";
-import { Routes, Route } from "react-router-dom";
-import LoginPage from "./LoginPage";
 import AdminLogin from "./AdminLogin";
 import AdminDashboard from "./admin/AdminDashboard";
 import ProtectedRoute from "./ProtectedRoute";
@@ -36,6 +34,15 @@ export default App;*/
 function App() {
   return (
     <Routes>
+      <Route path="/admin" element={<AdminLogin />} />
+      <Route
+        path="/admin/dashboard/*"
+        element={
+          <ProtectedRoute>
+            <AdminDashboard />
+          </ProtectedRoute>
+        }
+      />
       <Route path="/" element={<LoginPage />} />
       <Route path="/student/studenthome" element={<HomeStudent />} />
       <Route path="/student/details" element={<StudentDetails />} />

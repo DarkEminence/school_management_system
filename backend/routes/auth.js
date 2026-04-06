@@ -26,6 +26,14 @@ const authenticate = (req, res, next) => {
   });
 };
 
+const runAlterIgnoreDup = (sql) => {
+  db.query(sql, (err) => {
+    if (err && err.code !== 'ER_DUP_FIELDNAME') {
+      console.log('Schema alter note:', err.message);
+    }
+  });
+};
+
 const ensureFacultyManagementTables = () => {
   db.query(`CREATE TABLE IF NOT EXISTS faculty_classes (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -54,75 +62,204 @@ const ensureFacultyManagementTables = () => {
   });
 };
 
+/** Optional columns on teacher (match admin `teacher` table) + portal data tables */
+const ensureExtendedSchema = () => {
+  runAlterIgnoreDup('ALTER TABLE teacher ADD COLUMN designation VARCHAR(255) NULL');
+  runAlterIgnoreDup('ALTER TABLE teacher ADD COLUMN address TEXT NULL');
+  runAlterIgnoreDup('ALTER TABLE teacher ADD COLUMN dob DATE NULL');
+
+  db.query(`CREATE TABLE IF NOT EXISTS announcements (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  db.query(`CREATE TABLE IF NOT EXISTS student_fee (
+    student_id INT PRIMARY KEY,
+    total_amount DECIMAL(12,2) DEFAULT 0,
+    paid_amount DECIMAL(12,2) DEFAULT 0,
+    pending_amount DECIMAL(12,2) DEFAULT 0,
+    due_date DATE NULL,
+    status VARCHAR(50) DEFAULT 'Pending'
+  )`);
+
+  db.query(`CREATE TABLE IF NOT EXISTS student_subject_marks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    subject_id INT NOT NULL,
+    internal_marks INT DEFAULT 0,
+    assignment_marks INT DEFAULT 0,
+    exam_marks INT DEFAULT 0,
+    extra_marks INT DEFAULT 0,
+    UNIQUE KEY uq_student_subject (student_id, subject_id)
+  )`);
+
+  db.query(`CREATE TABLE IF NOT EXISTS student_attendance (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    slot_key VARCHAR(120) NOT NULL,
+    status ENUM('present','absent','break') NOT NULL DEFAULT 'absent',
+    UNIQUE KEY uq_student_slot (student_id, slot_key)
+  )`);
+
+  db.query(`CREATE TABLE IF NOT EXISTS teacher_salary (
+    teacher_id INT PRIMARY KEY,
+    base_salary DECIMAL(12,2) DEFAULT 0,
+    allowances DECIMAL(12,2) DEFAULT 0,
+    deductions DECIMAL(12,2) DEFAULT 0,
+    net_salary DECIMAL(12,2) DEFAULT 0,
+    last_paid DATE NULL
+  )`);
+};
+
 ensureFacultyManagementTables();
+ensureExtendedSchema();
 
 router.post('/login', (req, res) => {
   const { email, password, role = 'student' } = req.body;
-  const table = role === 'faculty' ? 'faculty' : 'student';
 
-  db.query(`SELECT * FROM ${table} WHERE email = ?`, [email], async (err, results) => {
+  if (!email || !password) {
+    return res.status(400).send('Email and password required');
+  }
+
+  if (role === 'faculty') {
+    const sql = `
+      SELECT t.teacher_id, t.name, t.email, t.phone, t.password_hash, t.dept_id,
+             d.dept_name,
+             t.designation
+      FROM teacher t
+      LEFT JOIN department d ON t.dept_id = d.dept_id
+      WHERE t.email = ?
+    `;
+    db.query(sql, [email], async (err, results) => {
+      if (err) {
+        console.log(err);
+        return res.status(500).send('Database error');
+      }
+      if (!results || results.length === 0) {
+        return res.status(401).send('User not found');
+      }
+
+      const user = results[0];
+      const match = await bcrypt.compare(password, user.password_hash);
+      if (!match) {
+        return res.status(401).send('Wrong password');
+      }
+
+      const userId = user.teacher_id;
+      const token = jwt.sign(
+        { id: userId, email: user.email, role: 'faculty' },
+        JWT_SECRET,
+        { expiresIn: '8h' }
+      );
+
+      res.json({
+        token,
+        role: 'faculty',
+        user: {
+          id: userId,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          department: user.dept_name || '',
+          designation: user.designation || '',
+        },
+      });
+    });
+    return;
+  }
+
+  const sql = `
+    SELECT s.student_id, s.name, s.email, s.phone, s.password_hash, s.class_id,
+           s.gender, s.address, s.dob,
+           c.class_name AS class_name
+    FROM student s
+    LEFT JOIN class c ON s.class_id = c.class_id
+    WHERE s.email = ?
+  `;
+
+  db.query(sql, [email], async (err, results) => {
     if (err) {
+      console.log(err);
       return res.status(500).send('Database error');
     }
-
     if (!results || results.length === 0) {
       return res.status(401).send('User not found');
     }
 
     const user = results[0];
     const match = await bcrypt.compare(password, user.password_hash);
-
     if (!match) {
       return res.status(401).send('Wrong password');
     }
 
+    const userId = user.student_id;
     const token = jwt.sign(
-      { id: user.id, email: user.email, role },
+      { id: userId, email: user.email, role: 'student' },
       JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '8h' }
     );
-
-    const responseUser = {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-    };
-
-    if (role === 'student') {
-      responseUser.course = user.course;
-      responseUser.year = user.year;
-    } else {
-      responseUser.department = user.department;
-      responseUser.designation = user.designation;
-    }
 
     res.json({
       token,
-      role,
-      user: responseUser,
+      role: 'student',
+      user: {
+        id: userId,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        course: user.class_name || '',
+        year: null,
+      },
     });
   });
 });
 
-router.get('/student/profile', authenticate, (req, res) => {
+router.get('/announcements', (req, res) => {
   db.query(
-    'SELECT id, name, email, course, year, phone, address, dob FROM student WHERE id = ?',
-    [req.user.id],
+    'SELECT id, title, description, created_at FROM announcements ORDER BY created_at DESC LIMIT 50',
     (err, results) => {
       if (err) {
-        return res.status(500).send('Database error');
+        console.log(err);
+        return res.json([]);
       }
-      if (!results || results.length === 0) {
-        return res.status(404).send('Student not found');
-      }
-      res.json(results[0]);
+      res.json(results || []);
     }
   );
 });
 
+router.get('/student/profile', authenticate, (req, res) => {
+  if (req.user.role !== 'student') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const sql = `
+    SELECT s.student_id AS id, s.name, s.email, s.phone, s.address, s.dob, s.gender, s.class_id,
+           c.class_name AS course, NULL AS year
+    FROM student s
+    LEFT JOIN class c ON s.class_id = c.class_id
+    WHERE s.student_id = ?
+  `;
+
+  db.query(sql, [req.user.id], (err, results) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send('Database error');
+    }
+    if (!results || results.length === 0) {
+      return res.status(404).send('Student not found');
+    }
+    res.json(results[0]);
+  });
+});
+
 router.post('/student/profile', authenticate, (req, res) => {
-  const { name, phone, course, year, address, dob } = req.body;
+  if (req.user.role !== 'student') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const { name, phone, address, dob, gender } = req.body;
   const studentId = req.user.id;
 
   if (!name || !phone) {
@@ -130,8 +267,8 @@ router.post('/student/profile', authenticate, (req, res) => {
   }
 
   db.query(
-    'UPDATE student SET name = ?, phone = ?, course = ?, year = ?, address = ?, dob = ? WHERE id = ?',
-    [name, phone, course || null, year || null, address || null, dob || null, studentId],
+    'UPDATE student SET name = ?, phone = ?, address = ?, dob = ?, gender = ? WHERE student_id = ?',
+    [name, phone, address || null, dob || null, gender || null, studentId],
     (err, result) => {
       if (err) {
         console.log('Update error:', err);
@@ -145,72 +282,138 @@ router.post('/student/profile', authenticate, (req, res) => {
         id: studentId,
         name,
         phone,
-        course,
-        year,
         address,
         dob,
+        gender,
       });
     }
   );
 });
 
 router.get('/student/attendance', authenticate, (req, res) => {
-  // Return mock attendance data organized by day and hour
-  // In production, fetch from database
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const hours = ["9AM", "10AM", "10:30AM (Break)", "11AM", "12PM", "12:30PM (Lunch)", "1PM", "2PM"];
-  
-  const attendance = {};
-  
-  days.forEach((day, dayIdx) => {
-    hours.forEach((hour, hourIdx) => {
-      const key = `${day}-${hour}`;
-      // Skip break and lunch times
-      if (hour.includes("Break") || hour.includes("Lunch")) {
-        attendance[key] = 'break';
-      } else {
-        // Mock data: vary attendance randomly
-        const random = Math.random();
-        attendance[key] = random > 0.3 ? 'present' : 'absent';
+  if (req.user.role !== 'student') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const hours = ['9AM', '10AM', '10:30AM (Break)', '11AM', '12PM', '12:30PM (Lunch)', '1PM', '2PM'];
+
+  db.query(
+    'SELECT slot_key, status FROM student_attendance WHERE student_id = ?',
+    [req.user.id],
+    (err, rows) => {
+      const attendance = {};
+      const map = {};
+      if (!err && rows) {
+        rows.forEach((r) => {
+          map[r.slot_key] = r.status;
+        });
       }
-    });
-  });
-  
-  res.json(attendance);
+
+      days.forEach((day) => {
+        hours.forEach((hour) => {
+          const key = `${day}-${hour}`;
+          if (hour.includes('Break') || hour.includes('Lunch')) {
+            attendance[key] = 'break';
+          } else if (map[key]) {
+            attendance[key] = map[key];
+          } else {
+            attendance[key] = 'absent';
+          }
+        });
+      });
+
+      res.json(attendance);
+    }
+  );
 });
 
 router.get('/student/marks', authenticate, (req, res) => {
-  // Return mock marks data for now
-  // In production, fetch from database
-  const marksData = {
-    subjects: [
-      { subject: 'Maths', internal: 20, assignment: 10, exam: 60, extra: 5 },
-      { subject: 'Physics', internal: 18, assignment: 9, exam: 55, extra: 4 },
-      { subject: 'Chemistry', internal: 17, assignment: 8, exam: 50, extra: 3 },
-      { subject: 'English', internal: 19, assignment: 10, exam: 62, extra: 5 },
-      { subject: 'Computer Science', internal: 20, assignment: 10, exam: 65, extra: 5 }
-    ],
-    summary: {
-      total: 300,
-      percentage: 74.5,
-      internalTotal: 94,
-      assignmentTotal: 47
+  if (req.user.role !== 'student') {
+    return res.status(403).send('Forbidden');
+  }
+
+  const sql = `
+    SELECT sub.subject_name AS subject,
+           m.internal_marks AS internal,
+           m.assignment_marks AS assignment,
+           m.exam_marks AS exam,
+           m.extra_marks AS extra
+    FROM student_subject_marks m
+    JOIN subject sub ON m.subject_id = sub.subject_id
+    WHERE m.student_id = ?
+    ORDER BY sub.subject_name
+  `;
+
+  db.query(sql, [req.user.id], (err, subjects) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send('Database error');
     }
-  };
-  res.json(marksData);
+
+    const list = subjects || [];
+    let internalTotal = 0;
+    let assignmentTotal = 0;
+    let examTotal = 0;
+    let extraTotal = 0;
+
+    list.forEach((s) => {
+      internalTotal += Number(s.internal) || 0;
+      assignmentTotal += Number(s.assignment) || 0;
+      examTotal += Number(s.exam) || 0;
+      extraTotal += Number(s.extra) || 0;
+    });
+
+    const total = internalTotal + assignmentTotal + examTotal + extraTotal;
+    const maxPossible = list.length * 100 || 1;
+    const percentage = list.length ? Math.round((total / maxPossible) * 1000) / 10 : 0;
+
+    res.json({
+      subjects: list,
+      summary: {
+        total,
+        percentage,
+        internalTotal,
+        assignmentTotal,
+        examTotal,
+        extraTotal,
+      },
+    });
+  });
 });
 
 router.get('/student/fees', authenticate, (req, res) => {
-  // Return mock fee data for now
-  // In production, fetch from database
-  const feeData = {
-    total: 50000,
-    paid: 30000,
-    pending: 20000,
-    dueDate: "2026-05-10",
-    status: "Pending"
-  };
-  res.json(feeData);
+  if (req.user.role !== 'student') {
+    return res.status(403).send('Forbidden');
+  }
+
+  db.query(
+    'SELECT total_amount, paid_amount, pending_amount, due_date, status FROM student_fee WHERE student_id = ?',
+    [req.user.id],
+    (err, results) => {
+      if (err) {
+        console.log(err);
+        return res.status(500).send('Database error');
+      }
+      if (!results || results.length === 0) {
+        return res.json({
+          total: 0,
+          paid: 0,
+          pending: 0,
+          dueDate: null,
+          status: 'No record',
+        });
+      }
+      const f = results[0];
+      res.json({
+        total: Number(f.total_amount) || 0,
+        paid: Number(f.paid_amount) || 0,
+        pending: Number(f.pending_amount) || 0,
+        dueDate: f.due_date,
+        status: f.status || 'Pending',
+      });
+    }
+  );
 });
 
 router.get('/faculty/profile', authenticate, (req, res) => {
@@ -218,19 +421,27 @@ router.get('/faculty/profile', authenticate, (req, res) => {
     return res.status(403).send('Forbidden');
   }
 
-  db.query(
-    'SELECT id, name, email, department, designation, phone, address, dob FROM faculty WHERE id = ?',
-    [req.user.id],
-    (err, results) => {
-      if (err) {
-        return res.status(500).send('Database error');
-      }
-      if (!results || results.length === 0) {
-        return res.status(404).send('Faculty member not found');
-      }
-      res.json(results[0]);
+  const sql = `
+    SELECT t.teacher_id AS id, t.name, t.email, t.phone,
+           d.dept_name AS department,
+           COALESCE(t.designation, '') AS designation,
+           COALESCE(t.address, '') AS address,
+           t.dob
+    FROM teacher t
+    LEFT JOIN department d ON t.dept_id = d.dept_id
+    WHERE t.teacher_id = ?
+  `;
+
+  db.query(sql, [req.user.id], (err, results) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send('Database error');
     }
-  );
+    if (!results || results.length === 0) {
+      return res.status(404).send('Faculty member not found');
+    }
+    res.json(results[0]);
+  });
 });
 
 router.post('/faculty/profile', authenticate, (req, res) => {
@@ -245,9 +456,17 @@ router.post('/faculty/profile', authenticate, (req, res) => {
     return res.status(400).send('Name and phone are required');
   }
 
+  const sql = `
+    UPDATE teacher t
+    LEFT JOIN department d ON d.dept_name = ?
+    SET t.name = ?, t.phone = ?, t.dept_id = COALESCE(d.dept_id, t.dept_id),
+        t.designation = ?, t.address = ?, t.dob = ?
+    WHERE t.teacher_id = ?
+  `;
+
   db.query(
-    'UPDATE faculty SET name = ?, phone = ?, department = ?, designation = ?, address = ?, dob = ? WHERE id = ?',
-    [name, phone, department || null, designation || null, address || null, dob || null, facultyId],
+    sql,
+    [department || '', name, phone, designation || null, address || null, dob || null, facultyId],
     (err, result) => {
       if (err) {
         console.log('Update error:', err);
@@ -275,15 +494,31 @@ router.get('/faculty/schedule', authenticate, (req, res) => {
     return res.status(403).send('Forbidden');
   }
 
-  const schedule = [
-    { day: 'Monday', slot: '9AM - 10:30AM', subject: 'Maths', room: 'A1' },
-    { day: 'Tuesday', slot: '11AM - 12:30PM', subject: 'Physics', room: 'B2' },
-    { day: 'Wednesday', slot: '2PM - 3:30PM', subject: 'Chemistry', room: 'C3' },
-    { day: 'Thursday', slot: '9AM - 10:30AM', subject: 'English', room: 'D4' },
-    { day: 'Friday', slot: '12PM - 1:30PM', subject: 'Computer Science', room: 'E5' },
-  ];
+  const sql = `
+    SELECT c.class_name, sub.subject_name AS subject_name
+    FROM class_subject_teacher cst
+    JOIN class c ON cst.class_id = c.class_id
+    JOIN subject sub ON cst.subject_id = sub.subject_id
+    WHERE cst.teacher_id = ?
+    ORDER BY c.class_name, sub.subject_name
+  `;
 
-  res.json(schedule);
+  db.query(sql, [req.user.id], (err, rows) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send('Database error');
+    }
+
+    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+    const schedule = (rows || []).map((r, i) => ({
+      day: weekdays[i % weekdays.length],
+      slot: `Class: ${r.class_name}`,
+      subject: r.subject_name,
+      room: r.class_name,
+    }));
+
+    res.json(schedule);
+  });
 });
 
 router.get('/faculty/salary', authenticate, (req, res) => {
@@ -291,15 +526,33 @@ router.get('/faculty/salary', authenticate, (req, res) => {
     return res.status(403).send('Forbidden');
   }
 
-  const salaryInfo = {
-    baseSalary: 75000,
-    allowances: 15000,
-    deductions: 5000,
-    netSalary: 85000,
-    lastPaid: '2026-04-01',
-  };
-
-  res.json(salaryInfo);
+  db.query(
+    'SELECT base_salary, allowances, deductions, net_salary, last_paid FROM teacher_salary WHERE teacher_id = ?',
+    [req.user.id],
+    (err, results) => {
+      if (err) {
+        console.log(err);
+        return res.status(500).send('Database error');
+      }
+      if (!results || results.length === 0) {
+        return res.json({
+          baseSalary: 0,
+          allowances: 0,
+          deductions: 0,
+          netSalary: 0,
+          lastPaid: null,
+        });
+      }
+      const s = results[0];
+      res.json({
+        baseSalary: Number(s.base_salary) || 0,
+        allowances: Number(s.allowances) || 0,
+        deductions: Number(s.deductions) || 0,
+        netSalary: Number(s.net_salary) || 0,
+        lastPaid: s.last_paid,
+      });
+    }
+  );
 });
 
 router.get('/faculty/classes', authenticate, (req, res) => {

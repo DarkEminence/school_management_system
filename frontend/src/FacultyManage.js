@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 
@@ -26,16 +26,7 @@ const FacultyManage = () => {
   const navigate = useNavigate();
   const token = localStorage.getItem("token");
 
-  useEffect(() => {
-    const loadData = async () => {
-      await fetchClasses();
-      setLoading(false);
-    };
-
-    loadData();
-  }, [token]);
-
-  const fetchClasses = async () => {
+  const fetchClasses = useCallback(async () => {
     try {
       const res = await axios.get("http://localhost:5000/api/faculty/classes", {
         headers: { Authorization: `Bearer ${token}` },
@@ -44,7 +35,16 @@ const FacultyManage = () => {
     } catch (err) {
       console.log(err);
     }
-  };
+  }, [token]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      await fetchClasses();
+      setLoading(false);
+    };
+
+    loadData();
+  }, [fetchClasses]);
 
   const fetchStudents = async (classId) => {
     try {

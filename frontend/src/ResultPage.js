@@ -23,19 +23,12 @@ const ResultPage = () => {
         setSummary(res.data.summary);
       } catch (err) {
         console.log(err);
-
-        // 🔹 Dummy data (for testing without backend)
-        setResults([
-          { subject: "Maths", internal: 20, assignment: 10, exam: 60, extra: 5 },
-          { subject: "Physics", internal: 18, assignment: 9, exam: 55, extra: 4 },
-          { subject: "Chemistry", internal: 17, assignment: 8, exam: 50, extra: 3 }
-        ]);
-
+        setResults([]);
         setSummary({
-          total: 254,
-          percentage: 75,
-          internalTotal: 55,
-          assignmentTotal: 27
+          total: 0,
+          percentage: 0,
+          internalTotal: 0,
+          assignmentTotal: 0,
         });
       } finally {
         setLoading(false);
