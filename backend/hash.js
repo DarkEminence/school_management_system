@@ -1,5 +1,12 @@
-const bcrypt = require('bcrypt');
+const bcrypt = require("bcrypt");
 
-bcrypt.hash('123456', 10).then(hash => {
-    console.log(hash);
+const password = process.argv[2];
+
+if (!password) {
+  console.log("Usage: node hash.js <password>");
+  process.exit(1);
+}
+
+bcrypt.hash(password, 10).then(hash => {
+  console.log("Hashed:", hash);
 });
