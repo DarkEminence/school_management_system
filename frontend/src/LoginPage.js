@@ -1,4 +1,4 @@
-import { useState } from "react";
+ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
@@ -30,7 +30,7 @@ const LoginPage = () => {
       if (selectedRole === "faculty") {
         navigate("/faculty/dashboard");
       } else {
-        navigate("/student/dashboard");
+        navigate("/student/studenthome");
       }
 
     } catch (err) {
